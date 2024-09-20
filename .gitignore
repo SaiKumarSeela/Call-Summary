@@ -9,8 +9,10 @@ notes.txt
 Samples/
 YoutubeAudios/
 practise.py
-
-
+whisper_model/
+chunk1.wav
+chunk2.wav
+uploaded_audio.wav
 # C extensions
 *.so
 
