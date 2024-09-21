@@ -7,19 +7,21 @@ import assemblyai as aai
 
 load_dotenv()
 
-assembly_api_key = os.getenv("ASSEMBLYAI_API_KEY")
-groq_api_key = os.getenv("GROQ_API_KEY")
+# assembly_api_key = os.getenv("ASSEMBLYAI_API_KEY")
+# groq_api_key = os.getenv("GROQ_API_KEY")
 
 
-llm = ChatGroq(
+# llm = ChatGroq(
+#     groq_api_key=groq_api_key,
+#     model_name="Llama3-8b-8192"
+# )
+
+def summarise_transcript(groq_api_key, mp3file_path,transcript):
+
+    llm = ChatGroq(
     groq_api_key=groq_api_key,
     model_name="Llama3-8b-8192"
-)
-
-def summarise_transcript(llm, mp3file_path,assembly_api_key):
-    # Get the transcript from the audio file
-    transcript = get_transcript_using_assemblyai(assembly_api_key=assembly_api_key, mp3file_path=mp3file_path)
-
+    )
     # Prepare the prompt for summarization
     summarise_prompt = f""" Summarise the following transcript delimited by 3 backticks: {transcript} """
 
@@ -38,14 +40,15 @@ def summarise_transcript(llm, mp3file_path,assembly_api_key):
     # Get the response from the Llama model
     response = llm.invoke(messages)
 
-    print(type(response))
+    # print(type(response))
 
     # Extract and print only the content from the response
     summary_content = response.content
-    print("Summary:", summary_content)
+    # print("Summary:", summary_content)
+    return summary_content
 
 
 # Example usage
-if __name__ == "__main__":
-    mp3file_path = "Samples/chunk1.mp3" 
-    summarise_transcript(mp3file_path,assembly_api_key)
+# if __name__ == "__main__":
+#     mp3file_path = "Samples/chunk1.mp3" 
+#     summarise_transcript(llm, mp3file_path)

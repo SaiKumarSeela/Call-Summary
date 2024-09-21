@@ -3,54 +3,76 @@ import json
 import os
 from src.logger import logging
 from src.dairization import WhisperTranscriber
-import time
 from dotenv import load_dotenv
+from src.summarization import summarise_transcript
+from src.utils import extract_audio_duration, count_words, display_conversation
+import pandas as pd
 
 load_dotenv()
 
 huggingface_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
+groq_api_key = os.getenv("GROQ_API_KEY")
 
-def display_conversation(filename='data.json', uniq_speakers=None):
-    logging.info("Display the conversation from the JSON file.")
+def show_transcription(conversation):
+    st.subheader("Transcription")
+    for entry in conversation:
+        st.markdown(f'<div class="transcript-line">{entry}</div>', unsafe_allow_html=True)
+
+def show_summary(summary_content):
+    st.subheader("Summary")
+    st.markdown(summary_content)
+
+def show_stats(audio_duration, total_words, words_by_speaker):
+    # Creating a DataFrame to compile the statistics
+    stat_data = {
+        'Audio Duration (s)': [audio_duration],
+        'Total Words': [total_words],
+    }
     
-    with open(filename, 'r') as file:
-        data = json.load(file)
+    # Add words by each speaker dynamically to the DataFrame
+    for speaker, word_count in words_by_speaker.items():
+        stat_data[f'Words by {speaker}'] = [word_count]
 
-    # Create dynamic speaker mapping based on unique speakers
-    if uniq_speakers is None:
-        uniq_speakers = list(set(segment['speaker'] for segment in data['segments']))
+    stats_df = pd.DataFrame(stat_data)
+    stats_df.to_csv("output.csv", index=False)
+    st.subheader("Statistics")
+    st.table(stats_df)
 
-    speaker_map = {speaker: f"Speaker {i + 1}" for i, speaker in enumerate(uniq_speakers)}
+def show_topics():
+    st.subheader("Topics")
+    st.text("This is where Topics content would be displayed.")
 
-    conversation = []
-    current_speaker = None
-    current_text = ""
-
-    for segment in data['segments']:
-        speaker = segment['speaker']
-        text = segment['text'].strip()
-
-        if speaker == current_speaker:
-            # If the same speaker continues, append to current text
-            current_text += f" {text}"
-        else:
-            # If a new speaker starts, save the previous text and reset
-            if current_speaker is not None:
-                conversation.append(f"**{speaker_map[current_speaker]}:** {current_text.strip()}")  # Add previous speaker's text
-            
-            # Update to the new speaker
-            current_speaker = speaker
-            current_text = text
-
-    # Don't forget to add the last speaker's text after the loop
-    if current_speaker is not None:
-        conversation.append(f"**{speaker_map[current_speaker]}:** {current_text.strip()}")
-
-    # Display the complete conversation
-    for line in conversation:
-        st.markdown(line)
+def show_intents():
+    st.subheader("Intents")
+    st.text("This is where Intents content would be displayed.")
 
 def main(huggingface_token):
+    # Custom CSS for centering content and styling clickable headers
+    st.markdown("""
+    <style>
+    .stButton > button {
+        background-color: transparent; /* No background */
+        border: none;                  /* No border */
+        color: white !important;       /* Default text color */
+        font-weight: bold;             /* Bold text */
+        cursor: pointer;               /* Pointer cursor on hover */
+    }
+    .stButton > button:hover {
+        color: #e6e6e6 !important;     /* Hover color */
+        text-decoration: underline;    /* Underline on hover */
+    }
+    .selected {
+        color: red !important;         /* Text color when selected */
+        text-decoration: underline;     /* Underline when selected */
+    }
+    .transcript-line {
+        border-bottom: 1px solid #e6e6e6;
+        padding-bottom: 10px;
+        margin-bottom: 10px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
     st.title("Audio Transcription and Speaker Diarization")
 
     audio_file = st.file_uploader("Upload an audio file (.wav or .mp3)", type=['wav', 'mp3'])
@@ -61,72 +83,72 @@ def main(huggingface_token):
             f.write(audio_file.getbuffer())
 
         transcriber = WhisperTranscriber("uploaded_audio.wav", huggingface_token)
-        
-        
-        
-        # Initialize process tracking
-        steps_completed = {
-            "model_loaded": False,
-            "transcribed": False,
-            "aligned": False,
-            "diarized": False,
-            "saved": False
-        }
-        # Load model if not already loaded
-        if 'model' not in st.session_state:
+
+        if 'model_loaded' not in st.session_state:
             with st.spinner("Loading model..."):
                 transcriber.load_model()
-                steps_completed["model_loaded"] = True
                 st.session_state.model_loaded = True  # Track model loading status
-                st.markdown("✅ Model Loaded completed!")  # Immediate feedback
+                st.markdown("✅ Model Loaded successfully!")  # Immediate feedback
 
-        # Cancel button to stop processing
-        cancel_button_clicked = st.button("Cancel")
-
-        if cancel_button_clicked:
-            transcriber.cancel_process = True  # Set cancellation flag
-            st.warning("Processing has been canceled.")
-        
-        if not transcriber.cancel_process:
-            transcriber.start_process()  # Record start time
-
-            # Process audio file steps with loaders
+        if 'conversation' not in st.session_state:
             with st.spinner("Transcribing audio..."):
                 transcriber.transcribe_audio()
-                steps_completed["transcribed"] = True
                 st.markdown("✅ Transcribing completed!")  # Immediate feedback
 
-            if not transcriber.cancel_process:
-                with st.spinner("Aligning transcription..."):
-                    transcriber.align_transcription()
-                    steps_completed["aligned"] = True
-                    st.markdown("✅ Alignment completed!")  # Immediate feedback
+            with st.spinner("Aligning transcription..."):
+                transcriber.align_transcription()
+                st.markdown("✅ Alignment completed!")  # Immediate feedback
 
-            if not transcriber.cancel_process:
-                with st.spinner("Diarizing audio..."):
-                    final_result, uniq_speakers = transcriber.diarize_audio()
-                    steps_completed["diarized"] = True
-                    st.markdown("✅ Diarization completed!")  # Immediate feedback
+            with st.spinner("Diarizing audio..."):
+                final_result, uniq_speakers = transcriber.diarize_audio()
+                st.markdown("✅ Diarization completed!")  # Immediate feedback
 
-            if not transcriber.cancel_process:
-                # Save results to JSON
-                transcriber.save_to_json(final_result)
-                steps_completed["saved"] = True
-                st.markdown("✅ Saving completed!")  # Immediate feedback
+            # Save results to JSON
+            transcriber.save_to_json(final_result)
+            conversation = display_conversation(filename='data.json', uniq_speakers=uniq_speakers)
+            summary_content = summarise_transcript(groq_api_key=groq_api_key, mp3file_path="uploaded_audio.wav", transcript=conversation)
+            
+            # Gathered data from previous steps
+            audio_duration = extract_audio_duration('uploaded_audio.wav')
+            total_words, words_by_speaker = count_words(conversation)
 
-            if not transcriber.cancel_process:
-                elapsed_time = transcriber.end_process()  # Record end time and calculate elapsed time
-                st.success(f"Audio processing complete in {elapsed_time:.2f} seconds!")
-
-                # Display completed steps with tick marks
-                # for step, completed in steps_completed.items():
-                #     if completed:
-                #         st.markdown(f"✅ **{step.replace('_', ' ').title()}** completed!")
-                #     else:
-                #         st.markdown(f"❌ **{step.replace('_', ' ').title()}** not completed!")
-
-                st.subheader("Conversation")
-                display_conversation(filename='data.json',uniq_speakers= uniq_speakers)
+            # Store results in session state for future use
+            st.session_state.conversation = conversation
+            st.session_state.summary_content = summary_content
+            st.session_state.audio_duration = audio_duration
+            st.session_state.total_words = total_words
+            st.session_state.words_by_speaker = words_by_speaker
+        
+        col1, col2 = st.columns(2)
+    
+        with col1:
+            st.markdown('<p class="column-header">🗣️ Transcription</p>', unsafe_allow_html=True)
+            show_transcription(st.session_state.conversation)
+        
+        with col2:
+            cols = st.columns(4)
+            sections = ["📌Topics", "🗣️Intents", "📒Summary", "📊Stats"]
+            
+            if 'selected_section' not in st.session_state:
+                st.session_state.selected_section = "📌Topics" 
+            
+            for i, section in enumerate(sections):
+                is_selected = st.session_state.selected_section == section
+                
+                if cols[i].button(section, key=section):
+                    st.session_state.selected_section = section
+                
+            # Display content based on selection
+            if st.session_state.selected_section == "📌Topics":
+                show_topics()
+            elif st.session_state.selected_section == "🗣️Intents":
+                show_intents()
+            elif st.session_state.selected_section == "📒Summary":
+                show_summary(st.session_state.summary_content)
+            elif st.session_state.selected_section == "📊Stats":
+                show_stats(st.session_state.audio_duration, 
+                           st.session_state.total_words, 
+                           st.session_state.words_by_speaker)
 
 if __name__ == "__main__":
     main(huggingface_token)

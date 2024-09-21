@@ -1,0 +1,16 @@
+codingNinja - naukari
+1job
+experience
+additional way to add lllm
+
+-------------------
+Podcast videos
+
+call summary , transcript generation
+audio data - 
+
+------------
+Transcirpt
+
+stats - total audio (duration, total words, words by speaker1, speaker2)
+modular code
