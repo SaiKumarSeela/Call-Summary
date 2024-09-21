@@ -6,6 +6,7 @@ import os
 import assemblyai as aai
 import json
 import wave
+import re
 from src.logger import logging
 
 
@@ -53,8 +54,8 @@ def get_transcript_using_assemblyai(assembly_api_key, mp3file_path):
     
 
 def extract_audio_duration(file_path):
-
     logging.info("Extracts the duration of an audio file in seconds.")
+    
     if not os.path.isfile(file_path):
         return 'File does not exist.'
     
@@ -62,10 +63,13 @@ def extract_audio_duration(file_path):
         with wave.open(file_path, 'rb') as audio_file:
             frames = audio_file.getnframes()
             rate = audio_file.getframerate()
-            duration = frames / float(rate)
+            duration_in_seconds = frames / float(rate)
 
-        logging.info(f"Total Duartion: {duration}")
-        return duration
+        # Convert duration from seconds to minutes
+        duration_in_minutes = duration_in_seconds / 60
+        
+        logging.info(f"Total Duration: {duration_in_minutes:.2f} minutes")
+        return round(duration_in_minutes, 2)  # Round to 2 decimal places
     
     except Exception as e:
         return str(e)
@@ -76,7 +80,7 @@ def count_words(transcript):
     speaker_word_count = {}
 
     for segment in transcript:
-        # Assuming each segment is formatted as "**Speaker X:** text"
+        # Assuming each segment is formatted as "<strong>Speaker X:</strong> text"
         if ':' in segment:
             speaker, text = segment.split(':', 1)
             text = text.strip()
@@ -85,7 +89,7 @@ def count_words(transcript):
             total_words += word_count
             
             # Update speaker word count
-            speaker_name = speaker.strip('**')  # Remove markdown formatting
+            speaker_name = speaker.strip('<strong>')  # Remove markdown formatting
             if speaker_name not in speaker_word_count:
                 speaker_word_count[speaker_name] = 0
             speaker_word_count[speaker_name] += word_count
@@ -120,7 +124,7 @@ def display_conversation(filename='data.json', uniq_speakers=None):
         else:
             # If a new speaker starts, save the previous text and reset
             if current_speaker is not None:
-                conversation.append(f"**{speaker_map[current_speaker]}:** {current_text.strip()}")  # Add previous speaker's text
+                conversation.append(f"<strong>{speaker_map[current_speaker]}:</strong> {current_text.strip()}")  # Add previous speaker's text
             
             # Update to the new speaker
             current_speaker = speaker
@@ -128,8 +132,25 @@ def display_conversation(filename='data.json', uniq_speakers=None):
 
     # Don't forget to add the last speaker's text after the loop
     if current_speaker is not None:
-        conversation.append(f"**{speaker_map[current_speaker]}:** {current_text.strip()}")
+        conversation.append(f"<strong>{speaker_map[current_speaker]}:</strong> {current_text.strip()}")
             
     return conversation
 
+def extract_speaker_texts(conversation):
+    logging.info("Extract individual speaker texts from the conversation output.")
+    speaker_texts = {}
+    speaker_pattern = re.compile(r'<strong>(Speaker \d+):</strong>(.*)')
+
+    for line in conversation:
+        match = speaker_pattern.match(line)
+        if match:
+            speaker = match.group(1).strip() 
+            speech = match.group(2).strip()  
+            
+            if speaker not in speaker_texts:
+                speaker_texts[speaker] = []
+            
+            speaker_texts[speaker].append(speech)
+
+    return speaker_texts
 

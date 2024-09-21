@@ -23,7 +23,7 @@ def summarise_transcript(groq_api_key, mp3file_path,transcript):
     model_name="Llama3-8b-8192"
     )
     # Prepare the prompt for summarization
-    summarise_prompt = f""" Summarise the following transcript delimited by 3 backticks: {transcript} """
+    summarise_prompt = f""" Summarise the following transcript delimited by 3 backticks without any introductory phrases: {transcript} """
 
     # Create the chat message structure for Groq API
     messages = [
@@ -44,6 +44,7 @@ def summarise_transcript(groq_api_key, mp3file_path,transcript):
 
     # Extract and print only the content from the response
     summary_content = response.content
+    summary_content = summary_content.split(":", 1)[-1].strip() 
     # print("Summary:", summary_content)
     return summary_content
 
