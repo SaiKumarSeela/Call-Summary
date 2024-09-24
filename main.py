@@ -1,110 +1,133 @@
-import streamlit as st
+from fastapi import FastAPI, UploadFile, File
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
+from pydantic import BaseModel
+import json
+import os
+from dotenv import load_dotenv
+from src.logger import logging
+from src.dairization import WhisperTranscriber
+from src.summarization import summarise_transcript
+from src.utils import extract_audio_duration, count_words, display_conversation, extract_speaker_texts
 import pandas as pd
+from typing import List, Dict
 
-def main():
-    st.set_page_config(layout="wide")
+load_dotenv()
+
+huggingface_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
+groq_api_key = os.getenv("GROQ_API_KEY")
+
+app = FastAPI()
+
+# Enable CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Mount the static files directory
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+class TranscriptionResult(BaseModel):
+    conversation: List[str]
+    summary_data: Dict
+    audio_duration: float
+    total_words: int
+    words_by_speaker: Dict[str, int]
+
+# Global variable to store processing results
+processing_results = {}
+
+@app.get("/")
+async def read_root():
+    return FileResponse('static/index.html')
+
+async def process_audio(file_path: str):
+    transcriber = WhisperTranscriber(file_path, huggingface_token)
+
+    yield "data: Loading model...\n"
+    transcriber.load_model()
+    yield "data: Model loaded successfully\n"
+
+    yield "data: Transcribing audio...\n"
+    transcriber.transcribe_audio()
+    yield "data: Transcription completed\n"
+
+    yield "data: Aligning transcription...\n"
+    transcriber.align_transcription()
+    yield "data: Alignment completed\n"
+
+    yield "data: Diarizing audio...\n"
+    final_result, uniq_speakers = transcriber.diarize_audio()
+    yield "data: Diarization completed\n"
+
+    transcriber.save_to_json(final_result)
+    conversation = display_conversation(filename='data.json', uniq_speakers=uniq_speakers)
+    speaker_texts = extract_speaker_texts(conversation)
+
+    yield "data: Generating summaries...\n"
+    individual_summary = {}
+    for speaker, speeches in speaker_texts.items():
+        individual_summary[speaker] = summarise_transcript(groq_api_key=groq_api_key, mp3file_path=file_path, transcript=speeches)
     
-    # Custom CSS for centering content and styling clickable headers
-    st.markdown("""
-    <style>
-    .stButton > button {
-        background-color: transparent; /* No background */
-        border: none;                  /* No border */
-        color: white !important;       /* Default text color */
-        font-weight: bold;             /* Bold text */
-        cursor: pointer;               /* Pointer cursor on hover */
-    }
-    .stButton > button:hover {
-        color: #e6e6e6 !important;     /* Hover color */
-        text-decoration: underline;    /* Underline on hover */
-    }
-    .selected {
-        color: red !important;         /* Text color when selected */
-        text-decoration: underline;     /* Underline when selected */
-    }
-    .transcript-line {
-        border-bottom: 1px solid #e6e6e6;
-        padding-bottom: 10px;
-        margin-bottom: 10px;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    st.title("Transcript Analysis App")
-
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown('<p class="column-header">🗣️ Transcription</p>', unsafe_allow_html=True)
-        show_transcription()
-    
-    # Create columns for clickable subheaders
-    with col2:
-        cols = st.columns(4)
-        sections = ["📌Topics", "🗣️Intents", "📒Summary", "📊Stats"]
-        
-        # Create buttons that look like text for section selection
-        if 'selected_section' not in st.session_state:
-            st.session_state.selected_section = "📌Topics"  # Default selection
-        
-        for i, section in enumerate(sections):
-            # Check if the current section is selected
-            is_selected = st.session_state.selected_section == section
-            
-            # Create the button and check if it was clicked
-            if cols[i].button(section, key=section):
-                st.session_state.selected_section = section  # Update session state on click
-            
-            # # Apply selected class for styling
-            # button_class = "selected" if is_selected else ""
-            # cols[i].markdown(f'<span class="{button_class}">{section}</span>', unsafe_allow_html=True)
-
-        # Display content based on selection
-        if st.session_state.selected_section == "📌Topics":
-            show_topics()
-        elif st.session_state.selected_section == "🗣️Intents":
-            show_intents()
-        elif st.session_state.selected_section == "📒Summary":
-            show_summary()
-        elif st.session_state.selected_section == "📊Stats":
-            show_stats()
-
-def show_transcription():
-    st.subheader("Transcription")
-    
-    transcript_data = [
-        {"Speaker": "Speaker 1:", "Text": "hello hello yes I am talking to speaker 2"},
-        {"Speaker": "Speaker 2:", "Text": "Sir your video kyC has been done right access bank's credit call me is hasn't no yes sir it has been done"},
-        {"Speaker": "Speaker 1:", "Text": "It was completed then I don't know what happened between I don't know what happened after saying that I don't know what happened after saying that"},
-        {"Speaker": "Speaker 2:", "Text": "Sir it's done I am showing that it's done your credit card will be available in 2-3 days"},
-        {"Speaker": "Speaker 1:", "Text": "okay I mean it will be available on 1st"}
-    ]
-    
-    for entry in transcript_data:
-        st.markdown(f'<div class="transcript-line"><strong>{entry["Speaker"]}</strong> {entry["Text"]}</div>', unsafe_allow_html=True)
-
-def show_topics():
-    st.subheader("Topics")
-    st.text("This is where Topics content would be displayed.")
-
-def show_intents():
-    st.subheader("Intents")
-    st.text("This is where Intents content would be displayed.")
-
-def show_summary():
-    st.subheader("Summary")
+    summary_content = summarise_transcript(groq_api_key=groq_api_key, mp3file_path=file_path, transcript=conversation)
     
     summary_data = {
-        "Category": ["Call Type"],
-        "Details": ["First call. The primary purpose is to confirm the completion of video KYC and to discuss credit card benefits and charges."]
+        "Speaker": list(individual_summary.keys()) + ["Total Summary"],
+        "Summary": list(individual_summary.values()) + [summary_content]
     }
-    
-    df = pd.DataFrame(summary_data)
-    st.table(df)
 
-def show_stats():
-    st.subheader("Stats")
-    st.text("This is where Stats content would be displayed.")
+    audio_duration = extract_audio_duration(file_path)
+    total_words, words_by_speaker = count_words(conversation)
+
+    processing_results['conversation'] = conversation
+    processing_results['summary_data'] = summary_data
+    processing_results['audio_duration'] = audio_duration
+    processing_results['total_words'] = total_words
+    processing_results['words_by_speaker'] = words_by_speaker
+
+    yield "data: Processing complete\n"
+
+@app.post("/transcribe/")
+async def transcribe_audio(file: UploadFile = File(...)):
+    file_path = "uploaded_audio.wav"
+    
+    # Save uploaded audio file
+    with open(file_path, "wb") as f:
+        f.write(await file.read())
+
+    # Stream status updates as the processing progresses
+    return StreamingResponse(process_audio(file_path), media_type="text/event-stream")
+
+@app.get("/summary/")
+async def get_summary():
+    if 'summary_data' not in processing_results:
+        return {"error": "Summary not available. Process an audio file first."}
+    return processing_results['summary_data']
+
+@app.get("/stats/")
+async def get_stats():
+    if 'audio_duration' not in processing_results:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Stats not available. Process an audio file first."}
+        )
+    return {
+        "audio_duration": processing_results['audio_duration'],
+        "total_words": processing_results['total_words'],
+        "words_by_speaker": processing_results['words_by_speaker']
+    }
+
+@app.get("/transcription/")
+async def get_transcription():
+    if 'conversation' not in processing_results:
+        return {"error": "Transcription not available. Process an audio file first."}
+    return {"conversation": processing_results['conversation']}
 
 if __name__ == "__main__":
-    main()
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
