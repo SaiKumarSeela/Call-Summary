@@ -13,6 +13,8 @@ whisper_model/
 chunk1.wav
 chunk2.wav
 uploaded_audio.wav
+transcriptions/
+
 # C extensions
 *.so
 

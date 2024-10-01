@@ -9,7 +9,9 @@ from dotenv import load_dotenv
 from src.logger import logging
 from src.dairization import WhisperTranscriber
 from src.summarization import summarise_transcript
-from src.utils import extract_audio_duration, count_words, display_conversation, extract_speaker_texts
+from src.utils import extract_audio_duration, count_words, display_conversation, extract_speaker_texts, save_transcription
+from src.s3_syncer import S3Sync
+from datetime import datetime
 import pandas as pd
 from typing import List, Dict
 
@@ -17,6 +19,11 @@ load_dotenv()
 
 huggingface_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
 groq_api_key = os.getenv("GROQ_API_KEY")
+TRAINING_BUCKET_NAME = "focus-transcribe"
+timestamp = datetime.now()
+timestamp = timestamp.strftime("%m_%d_%y_%H_%M_%S")
+
+s3_sync = S3Sync()
 
 app = FastAPI()
 
@@ -69,6 +76,12 @@ async def process_audio(file_path: str):
     conversation = display_conversation(filename='data.json', uniq_speakers=uniq_speakers)
     speaker_texts = extract_speaker_texts(conversation)
 
+    directory_path = save_transcription(conversation=conversation)
+    aws_bucket_url = f"s3://{TRAINING_BUCKET_NAME}/transcription/{timestamp}"
+    s3_sync.sync_folder_to_s3(folder = directory_path,aws_bucket_url=aws_bucket_url)
+    logging.info("Succesfully transcriptions are saved to s3 bucket")
+
+
     yield "data: Generating summaries...\n"
     individual_summary = {}
     for speaker, speeches in speaker_texts.items():
@@ -83,6 +96,7 @@ async def process_audio(file_path: str):
 
     audio_duration = extract_audio_duration(file_path)
     total_words, words_by_speaker = count_words(conversation)
+    
 
     processing_results['conversation'] = conversation
     processing_results['summary_data'] = summary_data

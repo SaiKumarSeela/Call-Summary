@@ -154,3 +154,27 @@ def extract_speaker_texts(conversation):
 
     return speaker_texts
 
+def save_transcription(conversation):
+    directory = 'transcriptions'
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+
+    full_transcription_file = os.path.join(directory, 'transcription_with_speakers.txt')
+    no_speakers_file = os.path.join(directory, 'transcription_with_no_speakers.txt')
+
+    # Empty the existing files if present
+    open(full_transcription_file, 'w').close()
+    open(no_speakers_file, 'w').close()
+
+    with open(full_transcription_file, 'a') as file_full:
+        with open(no_speakers_file, 'a') as file_no_speakers:
+            for entry in conversation:
+                # Remove HTML tags for full transcription
+                entry_no_tags = re.sub(r'<.*?>', '', entry)
+                file_full.write(entry_no_tags + '\n')
+                
+                # Remove speaker name for no speakers transcription
+                entry_without_speaker = entry_no_tags.split(': ', 1)[-1]
+                file_no_speakers.write(entry_without_speaker + ' ')
+    
+    return directory
