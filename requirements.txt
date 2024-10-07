@@ -1,6 +1,7 @@
 pytube
 SpeechRecognition
 pydub
+pyaudio
 youtube_dl
 python-ffmpeg
 python-dotenv
