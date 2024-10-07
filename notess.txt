@@ -14,3 +14,35 @@ Transcirpt
 
 stats - total audio (duration, total words, words by speaker1, speaker2)
 modular code
+--------------
+pytube
+SpeechRecognition
+pydub
+youtube_dl
+python-ffmpeg
+python-dotenv
+assemblyai>=0.15
+langchain==0.2.14
+langchain-community==0.2.12
+langchain-groq===0.1.9
+google-generativeai
+sentence-transformers
+moviepy
+requests
+ffmpeg-python
+git+https://github.com/m-bain/whisperx.git
+pyannote.audio
+streamlit
+fastapi
+python-multipart
+sounddevice
+numpy
+websockets
+uvicorn
+pyaudio
+deepgram-sdk==v3.7.2
+soundfile
+Flask==3.0.0
+Flask-SocketIO==5.3.6
+scipy
+

@@ -14,7 +14,10 @@ chunk1.wav
 chunk2.wav
 uploaded_audio.wav
 transcriptions/
-
+app2.py
+app3.py
+output.csv
+requirements-dev.txt
 # C extensions
 *.so
 

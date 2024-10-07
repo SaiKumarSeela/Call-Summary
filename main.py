@@ -1,147 +1,184 @@
-from fastapi import FastAPI, UploadFile, File
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
-from pydantic import BaseModel
-import json
+import streamlit as st
+import numpy as np
+import sounddevice as sd
+from scipy.io import wavfile
 import os
 from dotenv import load_dotenv
-from src.logger import logging
-from src.dairization import WhisperTranscriber
 from src.summarization import summarise_transcript
-from src.utils import extract_audio_duration, count_words, display_conversation, extract_speaker_texts, save_transcription
-from src.s3_syncer import S3Sync
+from deepgram import DeepgramClient, PrerecordedOptions
+from src.utils import count_words
+import io
 from datetime import datetime
+from src.s3_syncer import S3Sync
+import time
+import re
 import pandas as pd
-from typing import List, Dict
 
+# Load environment variables
 load_dotenv()
 
-huggingface_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
-groq_api_key = os.getenv("GROQ_API_KEY")
+# Initialize the Deepgram client
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
+GROQ_API = os.getenv("GROQ_API_KEY")
+deepgram = DeepgramClient(DEEPGRAM_API_KEY)
 TRAINING_BUCKET_NAME = "focus-transcribe"
 timestamp = datetime.now()
 timestamp = timestamp.strftime("%m_%d_%y_%H_%M_%S")
-
 s3_sync = S3Sync()
 
-app = FastAPI()
+# Audio recording parameters
+SAMPLE_RATE = 16000  # 16 kHz sample rate for better compatibility
+CHANNELS = 1  # Mono channel
 
-# Enable CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Store speaker-specific recordings and transcriptions
+if 'speakers_data' not in st.session_state:
+    st.session_state.speakers_data = {}
+if 'selected_speaker' not in st.session_state:
+    st.session_state.selected_speaker = None
+if 'conversation' not in st.session_state:
+    st.session_state.conversation = []
 
-# Mount the static files directory
-app.mount("/static", StaticFiles(directory="static"), name="static")
+def transcribe_audio(audio_data):
+    byte_io = io.BytesIO()
+    wavfile.write(byte_io, SAMPLE_RATE, audio_data)
+    audio_bytes = byte_io.getvalue()
 
-class TranscriptionResult(BaseModel):
-    conversation: List[str]
-    summary_data: Dict
-    audio_duration: float
-    total_words: int
-    words_by_speaker: Dict[str, int]
+    source = {"buffer": audio_bytes, "mimetype": "audio/wav"}
+    options = PrerecordedOptions(model="nova", language="en-US")
 
-# Global variable to store processing results
-processing_results = {}
+    response = deepgram.listen.prerecorded.v("1").transcribe_file(source, options)
+    return response.results.channels[0].alternatives[0].transcript
 
-@app.get("/")
-async def read_root():
-    return FileResponse('static/index.html')
+def save_transcription(conversation):
+    directory = 'transcriptions'
+    if not os.path.exists(directory):
+        os.makedirs(directory)
 
-async def process_audio(file_path: str):
-    transcriber = WhisperTranscriber(file_path, huggingface_token)
+    full_transcription_file = os.path.join(directory, 'transcription_with_speakers.txt')
+    no_speakers_file = os.path.join(directory, 'transcription_with_no_speakers.txt')
 
-    yield "data: Loading model...\n"
-    transcriber.load_model()
-    yield "data: Model loaded successfully\n"
+    # Empty the existing files if present
+    open(full_transcription_file, 'w').close()
+    open(no_speakers_file, 'w').close()
 
-    yield "data: Transcribing audio...\n"
-    transcriber.transcribe_audio()
-    yield "data: Transcription completed\n"
-
-    yield "data: Aligning transcription...\n"
-    transcriber.align_transcription()
-    yield "data: Alignment completed\n"
-
-    yield "data: Diarizing audio...\n"
-    final_result, uniq_speakers = transcriber.diarize_audio()
-    yield "data: Diarization completed\n"
-
-    transcriber.save_to_json(final_result)
-    conversation = display_conversation(filename='data.json', uniq_speakers=uniq_speakers)
-    speaker_texts = extract_speaker_texts(conversation)
-
-    directory_path = save_transcription(conversation=conversation)
-    aws_bucket_url = f"s3://{TRAINING_BUCKET_NAME}/transcription/{timestamp}"
-    s3_sync.sync_folder_to_s3(folder = directory_path,aws_bucket_url=aws_bucket_url)
-    logging.info("Succesfully transcriptions are saved to s3 bucket")
-
-
-    yield "data: Generating summaries...\n"
-    individual_summary = {}
-    for speaker, speeches in speaker_texts.items():
-        individual_summary[speaker] = summarise_transcript(groq_api_key=groq_api_key, mp3file_path=file_path, transcript=speeches)
+    with open(full_transcription_file, 'a') as file_full:
+        with open(no_speakers_file, 'a') as file_no_speakers:
+            for entry in conversation:
+                # Remove HTML tags for full transcription
+                entry_no_tags = re.sub(r'<.*?>', '', entry)
+                file_full.write(entry_no_tags + '\n')
+                
+                # Remove speaker name for no speakers transcription
+                entry_without_speaker = entry_no_tags.split(': ', 1)[-1]
+                file_no_speakers.write(entry_without_speaker + ' ')
     
-    summary_content = summarise_transcript(groq_api_key=groq_api_key, mp3file_path=file_path, transcript=conversation)
+    return directory
+
+
+
+def extract_speaker_texts(conversation):
+    speaker_texts = {}
+    for entry in conversation:
+        speaker, text = entry.split(': ', 1)
+        if speaker not in speaker_texts:
+            speaker_texts[speaker] = []
+        speaker_texts[speaker].append(text)
+    return {speaker: ' '.join(texts) for speaker, texts in speaker_texts.items()}
+
+st.title("Deepgram Transcription for Multiple Speakers")
+
+if 'num_speakers' not in st.session_state:
+    num_speakers = st.number_input("Enter the number of speakers:", min_value=1, max_value=10, value=2)
+    if st.button("Create Speaker Buttons"):
+        for i in range(num_speakers):
+            speaker_name = f"Speaker{i+1}"
+            st.session_state.speakers_data[speaker_name] = {"audio_data": None, "transcript": None, "duration": None}
+else:
+    num_speakers = len(st.session_state.speakers_data)
+
+# Create buttons for each speaker
+for speaker in st.session_state.speakers_data.keys():
+    if st.button(f"{speaker}", key=speaker):
+        st.session_state.selected_speaker = speaker
+
+if st.session_state.selected_speaker:
+    col1, col2 = st.columns(2)
     
-    summary_data = {
-        "Speaker": list(individual_summary.keys()) + ["Total Summary"],
-        "Summary": list(individual_summary.values()) + [summary_content]
-    }
-
-    audio_duration = extract_audio_duration(file_path)
-    total_words, words_by_speaker = count_words(conversation)
+    with col1:
+        if st.button("Start Recording"):
+            st.session_state.start_time = time.time()  # Store the start time
+            st.session_state.recording = sd.rec(int(60 * SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=CHANNELS, dtype='int16')
+            st.success(f"{st.session_state.selected_speaker} started recording.")
     
-
-    processing_results['conversation'] = conversation
-    processing_results['summary_data'] = summary_data
-    processing_results['audio_duration'] = audio_duration
-    processing_results['total_words'] = total_words
-    processing_results['words_by_speaker'] = words_by_speaker
-
-    yield "data: Processing complete\n"
-
-@app.post("/transcribe/")
-async def transcribe_audio(file: UploadFile = File(...)):
-    file_path = "uploaded_audio.wav"
+    with col2:
+        if st.button("Stop Recording"):
+            sd.stop()
+            st.session_state.speakers_data[st.session_state.selected_speaker]['duration'] = time.time() - st.session_state.start_time  # Calculate duration
+            st.session_state.speakers_data[st.session_state.selected_speaker]['audio_data'] = st.session_state.recording[:int(SAMPLE_RATE * st.session_state.speakers_data[st.session_state.selected_speaker]['duration'])].flatten()
+            st.success(f"{st.session_state.selected_speaker} stopped recording.")
     
-    # Save uploaded audio file
-    with open(file_path, "wb") as f:
-        f.write(await file.read())
+    if st.button("Transcribe"):
+        audio_data = st.session_state.speakers_data[st.session_state.selected_speaker]['audio_data']
+        if audio_data is not None:
+            with st.spinner("Transcribing..."):
+                transcript = transcribe_audio(audio_data)
+                st.session_state.speakers_data[st.session_state.selected_speaker]['transcript'] = transcript
+                st.session_state.conversation.append(f"{st.session_state.selected_speaker}: {transcript}")
+                st.subheader(f"Transcription for {st.session_state.selected_speaker}:")
+                st.write(f"{st.session_state.selected_speaker}: {transcript}")
+        else:
+            st.warning("Please record audio first.")
 
-    # Stream status updates as the processing progresses
-    return StreamingResponse(process_audio(file_path), media_type="text/event-stream")
+# Display all transcriptions
+if st.button("Show All Transcriptions"):
+    for entry in st.session_state.conversation:
+        st.write(entry)
 
-@app.get("/summary/")
-async def get_summary():
-    if 'summary_data' not in processing_results:
-        return {"error": "Summary not available. Process an audio file first."}
-    return processing_results['summary_data']
+# Save transcriptions
+if st.button("Save Transcriptions"):
+    if st.session_state.conversation:
+    
+        save_dir = save_transcription(st.session_state.conversation)
+        aws_bucket_url = f"s3://{TRAINING_BUCKET_NAME}/transcription/{timestamp}"
+        s3_sync.sync_folder_to_s3(folder = save_dir,aws_bucket_url=aws_bucket_url)
+        print("Succesfully transcriptions are saved to s3 bucket")
+        st.success(f"Transcriptions saved in {save_dir}")
+    else:
+        st.warning("No transcriptions to save.")
 
-@app.get("/stats/")
-async def get_stats():
-    if 'audio_duration' not in processing_results:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "Stats not available. Process an audio file first."}
-        )
-    return {
-        "audio_duration": processing_results['audio_duration'],
-        "total_words": processing_results['total_words'],
-        "words_by_speaker": processing_results['words_by_speaker']
-    }
+# Generate summary
+if st.button("Generate Summary"):
+    if st.session_state.conversation:
+        speaker_texts = extract_speaker_texts(st.session_state.conversation)
+        individual_summary = {}
+        for speaker, speeches in speaker_texts.items():
+            individual_summary[speaker] = summarise_transcript(groq_api_key=GROQ_API, transcript=speeches)
+        
+        summary_content = summarise_transcript(groq_api_key=GROQ_API,  transcript=' '.join(st.session_state.conversation))
+        
+        summary_data = {
+            "Speaker": list(individual_summary.keys()) + ["Total Summary"],
+            "Summary": list(individual_summary.values()) + [summary_content]
+        }
+        
+        st.subheader("Summaries")
+        st.table(pd.DataFrame(summary_data))
+    else:
+        st.warning("No transcriptions available for summarization.")
+if st.button("Get Stats"):
+    if st.session_state.conversation:
 
-@app.get("/transcription/")
-async def get_transcription():
-    if 'conversation' not in processing_results:
-        return {"error": "Transcription not available. Process an audio file first."}
-    return {"conversation": processing_results['conversation']}
+        total_words, words_by_speaker = count_words(st.session_state.conversation)
+        stat_data = {
+        'Total Words': [total_words],
+        }
+        # Add words by each speaker dynamically to the DataFrame
+        for speaker, word_count in words_by_speaker.items():
+            stat_data[f'Words by {speaker}'] = [word_count]
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+        stats_df = pd.DataFrame(stat_data)
+        stats_df.to_csv("output.csv", index=False)
+        # st.subheader("Statistics")
+        st.table(stats_df)
+    else:
+        st.warning("No stats should be displayed.")

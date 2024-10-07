@@ -16,7 +16,7 @@ load_dotenv()
 #     model_name="Llama3-8b-8192"
 # )
 
-def summarise_transcript(groq_api_key, mp3file_path,transcript):
+def summarise_transcript(groq_api_key,transcript):
 
     llm = ChatGroq(
     groq_api_key=groq_api_key,
