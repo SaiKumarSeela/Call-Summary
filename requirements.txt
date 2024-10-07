@@ -19,7 +19,6 @@ numpy
 websockets
 boto3
 uvicorn
-pyaudio
 deepgram-sdk==v3.7.2
 soundfile
 scipy

@@ -20,14 +20,14 @@ load_dotenv()
 # Initialize the Deepgram client
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
 GROQ_API = os.getenv("GROQ_API_KEY")
-deepgram = DeepgramClient(DEEPGRAM_API_KEY)
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
 AWS_REGION = os.getenv("AWS_REGION")
+deepgram = DeepgramClient(DEEPGRAM_API_KEY)
 TRAINING_BUCKET_NAME = "focus-transcribe"
 timestamp = datetime.now()
 timestamp = timestamp.strftime("%m_%d_%y_%H_%M_%S")
-s3_sync = S3Sync()
+s3_sync = S3Sync(AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_REGION)
 
 # Audio recording parameters
 SAMPLE_RATE = 16000  # 16 kHz sample rate for better compatibility
@@ -143,7 +143,7 @@ if st.button("Save Transcriptions"):
     
         save_dir = save_transcription(st.session_state.conversation)
         aws_bucket_url = f"s3://{TRAINING_BUCKET_NAME}/transcription/{timestamp}"
-        s3_sync.sync_folder_to_s3(folder = save_dir,aws_bucket_url=aws_bucket_url)
+        s3_sync.sync_folder_to_s3(folder = save_dir,aws_bucket_name=TRAINING_BUCKET_NAME)
         print("Succesfully transcriptions are saved to s3 bucket")
         st.success(f"Transcriptions saved in {save_dir}")
     else:
